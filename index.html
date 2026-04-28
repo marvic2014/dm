@@ -689,13 +689,25 @@
         window.destroySession = async () => {
             if (roomId) {
                 try {
+                    // 1. Unsubscribe from real-time updates so the local deletion 
+                    // doesn't trigger a premature page reload and cancel the network request.
+                    if (unsub) unsub(); 
+                    
+                    // 2. Visual feedback so you know it's working
+                    const btn = document.getElementById('btn-destroy-session');
+                    if (btn) {
+                        btn.innerText = "Destroying Room...";
+                        btn.classList.add('opacity-50', 'pointer-events-none');
+                    }
+
+                    // 3. Actually delete the room from the server
                     await deleteDoc(getGameRef(roomId));
                 } catch(e) {
                     console.error("Failed to destroy room:", e);
                 }
             }
             localStorage.removeItem('last_room'); // CLEAR CACHE ON ROOM DESTRUCTION
-            location.reload();
+            location.reload(); // Now it is safe to reload
         };
 
         window.globalUndo = async () => {
