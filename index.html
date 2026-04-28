@@ -17,7 +17,7 @@
             grid-template-rows: repeat(8, minmax(0, 1fr)); 
             aspect-ratio: 1/1; 
             width: 100%;
-            max-width: 65vh; /* Keep it from stretching out of view */
+            max-width: 65vh; 
             margin: 0 auto;
             border: 8px solid #1e293b; 
             background: #1e293b; 
@@ -33,7 +33,7 @@
             width: 85%; height: 85%; border-radius: 50%; display: flex; align-items: center; justify-content: center; 
             cursor: pointer; transition: all 0.2s ease; font-weight: 900; color: white; 
             border: 3px solid rgba(255,255,255,0.2); z-index: 10;
-            transform: rotate(0deg) scale(1); /* Baseline */
+            transform: rotate(0deg) scale(1); 
         }
         .piece.selected { transform: rotate(0deg) scale(1.15); border-color: #fbbf24; box-shadow: 0 0 20px #fbbf24; z-index: 50; }
         
@@ -47,7 +47,7 @@
             transform: rotate(0deg); 
         }
 
-        /* Rotated Board Logic */
+        /* Rotated Board Logic for Red Player */
         .board-rotated { transform: rotate(180deg); }
         .board-rotated .piece { transform: rotate(180deg) scale(1); }
         .board-rotated .piece.selected { transform: rotate(180deg) scale(1.15); }
@@ -105,14 +105,14 @@
 
         <div class="game-grid">
             <!-- Blue Stats -->
-            <div id="panel-blue" style="order: 1;" class="bg-slate-800/50 p-6 rounded-3xl border border-slate-700 h-fit transition-all duration-500">
-                <p class="text-[10px] font-black text-blue-400 mb-2 uppercase tracking-widest">Blue Score</p>
-                <p id="score-blue" class="text-5xl font-mono font-black mb-4 text-blue-100">0</p>
+            <div id="panel-blue" style="order: 1;" class="bg-slate-800/50 p-6 rounded-3xl border border-slate-700 flex flex-col h-full max-h-[600px] shadow-lg transition-all duration-500">
+                <p class="text-[10px] font-black text-blue-400 mb-2 uppercase tracking-widest text-center">Blue Score</p>
+                <p id="score-blue" class="text-5xl font-mono font-black mb-4 text-blue-100 text-center">0</p>
                 <div class="text-[10px] font-bold uppercase text-slate-500 text-left px-2 border-b border-slate-700 pb-1 mb-2">Capture Log</div>
                 <div id="log-blue" class="history-list text-blue-300"></div>
             </div>
 
-            <!-- Board -->
+            <!-- Board Section -->
             <div id="board-container" style="order: 2;" class="flex flex-col gap-6 items-center w-full min-w-0">
                 <div id="board" class="checker-board rounded-xl shadow-2xl overflow-hidden ring-1 ring-white/10"></div>
                 
@@ -126,9 +126,9 @@
             </div>
 
             <!-- Red Stats -->
-            <div id="panel-red" style="order: 3;" class="bg-slate-800/50 p-6 rounded-3xl border border-slate-700 h-fit transition-all duration-500">
-                <p class="text-[10px] font-black text-red-400 mb-2 uppercase tracking-widest">Red Score</p>
-                <p id="score-red" class="text-5xl font-mono font-black mb-4 text-red-100">0</p>
+            <div id="panel-red" style="order: 3;" class="bg-slate-800/50 p-6 rounded-3xl border border-slate-700 flex flex-col h-full max-h-[600px] shadow-lg transition-all duration-500">
+                <p class="text-[10px] font-black text-red-400 mb-2 uppercase tracking-widest text-center">Red Score</p>
+                <p id="score-red" class="text-5xl font-mono font-black mb-4 text-red-100 text-center">0</p>
                 <div class="text-[10px] font-bold uppercase text-slate-500 text-left px-2 border-b border-slate-700 pb-1 mb-2">Capture Log</div>
                 <div id="log-red" class="history-list text-red-300"></div>
             </div>
@@ -155,7 +155,7 @@
             };
         }
 
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'damath-stable-v2';
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'damath-stable-v3';
         
         let app, auth, db;
         try {
@@ -180,7 +180,7 @@
         let tempLogs = [];
         let jumpChain = false;
 
-        // Operators map logically 1:1 with the DOM rendering row by row (placed on even squares/white tiles)
+        // Operators mapping perfectly to playable tiles (Even squares / r+c % 2 === 0)
         const boardOps = [
             ['×', null, '÷', null, '-', null, '+', null], 
             [null, '÷', null, '×', null, '+', null, '-'],
@@ -246,7 +246,8 @@
                 scores: { blue: 0, red: 0 },
                 history: { blue: [], red: [] },
                 players: { blue: user.uid, red: null },
-                lastAction: Date.now()
+                lastAction: Date.now(),
+                liveState: null
             };
             try {
                 await setDoc(getGameRef(id), data);
@@ -302,7 +303,7 @@
             document.getElementById('room-display').innerText = `ROOM: ${id}`;
             document.getElementById('role-display').innerText = `PLAYER: ${role.toUpperCase()}`;
             
-            // --- FIX FOR BOARD AND SIDEBAR ORIENTATION ---
+            // Mirror Orientation: Red's board rotates, Blue stays normal
             const boardEl = document.getElementById('board');
             const panelBlue = document.getElementById('panel-blue');
             const panelRed = document.getElementById('panel-red');
@@ -322,13 +323,18 @@
                 if (snap.exists()) {
                     gameState = snap.data();
                     gameState.board = JSON.parse(gameState.board);
+                    
+                    if (gameState.liveState) {
+                        gameState.liveState = JSON.parse(gameState.liveState);
+                    }
                     if (!gameState.history) gameState.history = { blue: [], red: [] };
                     
-                    if (gameState.turn !== myRole) {
-                        undoLocal(); // Force clean local state if remote updates
-                    } else {
-                        render();
+                    // Clear local draft if turn shifted remotely
+                    if (gameState.turn !== myRole && turnBoard) {
+                        turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
                     }
+                    
+                    render();
                 } else {
                     alert("Room was closed by the host.");
                     location.reload();
@@ -336,81 +342,133 @@
             }, (err) => console.error("Snapshot error:", err));
         }
 
-        // Fix for Pieces strictly on playable squares
         function generateBoard() {
             let b = Array(8).fill(null).map(() => Array(8).fill(null));
             const add = (r, c, col, val) => b[r][c] = { color: col, val, dama: false };
             
+            // Playable tiles are evenly positioned `(r+c)%2 === 0`
             // Red Pieces (Top Side)
-            // Row 0: cols 0, 2, 4, 6
             add(0, 0, 'red', 2); add(0, 2, 'red', -5); add(0, 4, 'red', 8); add(0, 6, 'red', -11);
-            // Row 1: cols 1, 3, 5, 7
             add(1, 1, 'red', -7); add(1, 3, 'red', 10); add(1, 5, 'red', -3); add(1, 7, 'red', 0);
-            // Row 2: cols 0, 2, 4, 6
             add(2, 0, 'red', 4); add(2, 2, 'red', -1); add(2, 4, 'red', 6); add(2, 6, 'red', -9);
 
             // Blue Pieces (Bottom Side)
-            // Row 5: cols 1, 3, 5, 7
             add(5, 1, 'blue', -9); add(5, 3, 'blue', 6); add(5, 5, 'blue', -1); add(5, 7, 'blue', 4);
-            // Row 6: cols 0, 2, 4, 6
             add(6, 0, 'blue', 0); add(6, 2, 'blue', -3); add(6, 4, 'blue', 10); add(6, 6, 'blue', -7);
-            // Row 7: cols 1, 3, 5, 7
             add(7, 1, 'blue', -11); add(7, 3, 'blue', 8); add(7, 5, 'blue', -5); add(7, 7, 'blue', 2);
             
             return b;
         }
 
+        // REAL-TIME SYNC - Pushes ghost updates directly to Firestore so opponent sees moves live
+        function pushLiveState() {
+            if (!roomId || !user) return;
+            updateDoc(getGameRef(roomId), {
+                liveState: JSON.stringify({
+                    board: turnBoard,
+                    selected: selected,
+                    score: tempScore,
+                    logs: tempLogs
+                })
+            }).catch(e => console.warn("Live sync error", e));
+        }
+
         function render() {
             if (!gameState) return;
+            
+            // Determine whose vision we are rendering based on real-time sync
+            let displayBoard = gameState.board;
+            let displaySelected = null;
+            let displayScoreBlue = gameState.scores.blue;
+            let displayScoreRed = gameState.scores.red;
+            let displayLogsBlue = gameState.history.blue || [];
+            let displayLogsRed = gameState.history.red || [];
+            let isLiveOpponent = false;
+
+            if (gameState.turn === myRole) {
+                // Showing my local drafting
+                displayBoard = turnBoard || gameState.board;
+                displaySelected = selected;
+                if (myRole === 'blue') displayScoreBlue += tempScore;
+                else displayScoreRed += tempScore;
+                
+                if (myRole === 'blue' && tempLogs.length) displayLogsBlue = [...displayLogsBlue, ...tempLogs];
+                if (myRole === 'red' && tempLogs.length) displayLogsRed = [...displayLogsRed, ...tempLogs];
+            } else if (gameState.liveState) {
+                // Showing opponent's drafting via live real-time state!
+                displayBoard = gameState.liveState.board || gameState.board;
+                displaySelected = gameState.liveState.selected;
+                isLiveOpponent = true;
+                
+                if (gameState.turn === 'blue') displayScoreBlue += gameState.liveState.score || 0;
+                else displayScoreRed += gameState.liveState.score || 0;
+                
+                if (gameState.turn === 'blue' && gameState.liveState.logs) displayLogsBlue = [...displayLogsBlue, ...gameState.liveState.logs];
+                if (gameState.turn === 'red' && gameState.liveState.logs) displayLogsRed = [...displayLogsRed, ...gameState.liveState.logs];
+            }
+
             const boardEl = document.getElementById('board');
             boardEl.innerHTML = '';
-            const b = turnBoard || gameState.board;
 
             for (let r = 0; r < 8; r++) {
                 for (let c = 0; c < 8; c++) {
                     const sq = document.createElement('div');
-                    const isPlayable = (r + c) % 2 === 0; // Damath pieces/operators go on light squares
+                    
+                    // The White/Light tiles are strictly the playable ones
+                    const isPlayable = (r + c) % 2 === 0;
                     sq.className = `square ${isPlayable ? 'light' : 'dark'}`;
                     
                     const op = boardOps[r][c];
-                    if (op) {
+                    if (op && isPlayable) {
                         sq.innerHTML = `<span class="operator">${op}</span>`;
                     }
 
-                    const p = b[r][c];
+                    const p = displayBoard[r][c];
                     if (p) {
                         const pEl = document.createElement('div');
                         let underline = (p.val === 6 || p.val === 9 || p.val === -6 || p.val === -9) ? 'underline underline-offset-4' : '';
-                        pEl.className = `piece ${p.color} ${underline} ${p.dama ? 'ring-[4px] ring-yellow-400 ring-offset-2 ring-offset-[#1e293b]' : ''}`;
-                        if (selected && selected.r === r && selected.c === c) pEl.classList.add('selected');
+                        pEl.className = `piece ${p.color} ${underline} ${p.dama ? 'ring-[4px] ring-yellow-400 ring-offset-2 ring-offset-[#f1f5f9]' : ''}`;
+                        
+                        // Opponent's live selection pulses softly
+                        if (displaySelected && displaySelected.r === r && displaySelected.c === c) {
+                            pEl.classList.add('selected');
+                            if (isLiveOpponent) pEl.classList.add('animate-pulse');
+                        }
+                        
                         pEl.innerText = p.val;
                         pEl.onclick = () => handlePieceClick(r, c);
                         sq.appendChild(pEl);
                     }
 
-                    const isMove = moves.some(m => m.r === r && m.c === c);
-                    if (isMove) {
-                        sq.classList.add('valid-move', 'cursor-pointer');
-                        sq.onclick = () => executeMove(r, c);
+                    // Only show valid targets if it's MY turn
+                    if (gameState.turn === myRole) {
+                        const isMove = moves.some(m => m.r === r && m.c === c);
+                        if (isMove) {
+                            sq.classList.add('valid-move', 'cursor-pointer');
+                            sq.onclick = () => executeMove(r, c);
+                        }
                     }
                     boardEl.appendChild(sq);
                 }
             }
 
-            // Real-time floating point scores
-            document.getElementById('score-blue').innerText = gameState.scores.blue % 1 === 0 ? gameState.scores.blue : gameState.scores.blue.toFixed(2);
-            document.getElementById('score-red').innerText = gameState.scores.red % 1 === 0 ? gameState.scores.red : gameState.scores.red.toFixed(2);
+            // Real-time floating point scores dynamically merged
+            document.getElementById('score-blue').innerText = displayScoreBlue % 1 === 0 ? displayScoreBlue : displayScoreBlue.toFixed(2);
+            document.getElementById('score-red').innerText = displayScoreRed % 1 === 0 ? displayScoreRed : displayScoreRed.toFixed(2);
             document.getElementById('panel-blue').classList.toggle('active-turn', gameState.turn === 'blue');
             document.getElementById('panel-red').classList.toggle('active-turn', gameState.turn === 'red');
             
-            ['blue', 'red'].forEach(color => {
-                const logEl = document.getElementById(`log-${color}`);
-                if (logEl) {
-                    const arr = gameState.history[color] || [];
-                    logEl.innerHTML = arr.map(item => `<div class="history-item">${item}</div>`).join('');
-                    logEl.scrollTop = logEl.scrollHeight;
-                }
-            });
+            // Sync history
+            const logBlueEl = document.getElementById('log-blue');
+            if (logBlueEl) {
+                logBlueEl.innerHTML = displayLogsBlue.map(item => `<div class="history-item">${item}</div>`).join('');
+                logBlueEl.scrollTop = logBlueEl.scrollHeight;
+            }
+            const logRedEl = document.getElementById('log-red');
+            if (logRedEl) {
+                logRedEl.innerHTML = displayLogsRed.map(item => `<div class="history-item">${item}</div>`).join('');
+                logRedEl.scrollTop = logRedEl.scrollHeight;
+            }
 
             const status = document.getElementById('turn-status');
             if (gameState.turn === myRole) {
@@ -418,8 +476,8 @@
                 status.className = "font-black text-xl text-green-400 animate-pulse uppercase";
                 document.getElementById('actions').classList.toggle('hidden', !turnBoard);
             } else {
-                status.innerText = `${gameState.turn.toUpperCase()}'S TURN`;
-                status.className = "font-bold text-slate-500 italic";
+                status.innerText = isLiveOpponent ? `OPPONENT IS MOVING...` : `WAITING FOR ${gameState.turn.toUpperCase()}`;
+                status.className = isLiveOpponent ? "font-bold text-yellow-400 italic animate-pulse" : "font-bold text-slate-500 italic";
                 document.getElementById('actions').classList.add('hidden');
             }
         }
@@ -432,6 +490,8 @@
 
             selected = { r, c };
             moves = getAvailableMoves(r, c, turnBoard || gameState.board, jumpChain);
+            
+            pushLiveState(); // Real-time emit to opponent
             render();
         }
 
@@ -475,9 +535,11 @@
             } else {
                 jumpChain = false;
                 moves = [];
-                // Promote logic (Blue promotes at bottom row 7, Red at top row 0)
-                if ((myRole === 'blue' && tr === 7) || (myRole === 'red' && tr === 0)) p.dama = true;
+                // Promote logic (Blue promotes at bottom row 0 visually, Red at top row 7 visually)
+                if ((myRole === 'blue' && tr === 0) || (myRole === 'red' && tr === 7)) p.dama = true;
             }
+            
+            pushLiveState(); // Real-time emit
             render();
         }
 
@@ -520,6 +582,7 @@
         
         window.undoLocal = () => {
             turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
+            pushLiveState(); // Emit the cancellation
             render();
         };
         document.getElementById('btn-undo').onclick = window.undoLocal;
@@ -536,15 +599,19 @@
 
             if (tempLogs.length > 0) newHistory[myRole].push(...tempLogs);
             
+            const finalBoard = turnBoard || gameState.board;
+            
+            // Clear local draft state so UI doesn't stutter on flush
+            turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
+            
             await updateDoc(getGameRef(roomId), {
-                board: JSON.stringify(turnBoard),
+                board: JSON.stringify(finalBoard),
                 turn: nextTurn,
                 scores: newScores,
                 history: newHistory,
-                lastAction: Date.now()
+                lastAction: Date.now(),
+                liveState: null // Wipes ghost view perfectly
             });
-            
-            window.undoLocal(); // Clears local temp vars
         };
         document.getElementById('btn-commit').onclick = window.commitTurn;
 
