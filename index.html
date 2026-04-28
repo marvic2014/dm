@@ -565,28 +565,70 @@
             const allDirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
             // Blue moves "up" (decreasing r), Red moves "down" (increasing r)
             const forwardDirs = p.color === 'blue' ? [[-1,-1],[-1,1]] : [[1,-1],[1,1]];
-            const dirs = p.dama ? allDirs : forwardDirs;
 
-            allDirs.forEach(([dr, dc]) => {
-                const mr = r + dr, mc = c + dc;
-                const tr = r + dr*2, tc = c + dc*2;
-                if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) {
-                    const mid = b[mr][mc];
-                    if (mid && mid.color !== p.color && !b[tr][tc]) {
-                        jumps.push({ r: tr, c: tc, cap: { r: mr, c: mc } });
+            if (p.dama) {
+                // Flying King (Dama) Logic - slides and jumps any number of squares in all directions
+                allDirs.forEach(([dr, dc]) => {
+                    let step = 1;
+                    let foundPiece = false;
+                    let victim = null;
+
+                    while (true) {
+                        const tr = r + dr * step;
+                        const tc = c + dc * step;
+                        
+                        if (tr < 0 || tr >= 8 || tc < 0 || tc >= 8) break;
+                        
+                        const currentSquare = b[tr][tc];
+
+                        if (!currentSquare) {
+                            if (!foundPiece) {
+                                // Empty square and haven't jumped yet -> Valid Slide
+                                slides.push({ r: tr, c: tc });
+                            } else {
+                                // Empty square AFTER jumping a piece -> Valid Landing Spot
+                                jumps.push({ r: tr, c: tc, cap: victim });
+                            }
+                        } else {
+                            if (!foundPiece && currentSquare.color !== p.color) {
+                                // Found first opponent piece to jump over
+                                foundPiece = true;
+                                victim = { r: tr, c: tc };
+                            } else {
+                                // Either hit our own piece, or hit a second piece blocking the path
+                                break;
+                            }
+                        }
+                        step++;
                     }
-                }
-            });
+                });
+            } else {
+                // Normal Piece Logic
+                // Normal pieces can capture forward OR backward (Official Damath Rule)
+                allDirs.forEach(([dr, dc]) => {
+                    const mr = r + dr, mc = c + dc;
+                    const tr = r + dr*2, tc = c + dc*2;
+                    if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) {
+                        const mid = b[mr][mc];
+                        if (mid && mid.color !== p.color && !b[tr][tc]) {
+                            jumps.push({ r: tr, c: tc, cap: { r: mr, c: mc } });
+                        }
+                    }
+                });
 
+                // Normal pieces can only slide forward
+                forwardDirs.forEach(([dr, dc]) => {
+                    const tr = r + dr, tc = c + dc;
+                    if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8 && !b[tr][tc]) {
+                        slides.push({ r: tr, c: tc });
+                    }
+                });
+            }
+
+            // Forced Jumps: If a jump is available, it is the only legal move
             if (jumps.length > 0) return jumps;
             if (onlyJumps) return [];
-
-            dirs.forEach(([dr, dc]) => {
-                const tr = r + dr, tc = c + dc;
-                if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8 && !b[tr][tc]) {
-                    slides.push({ r: tr, c: tc });
-                }
-            });
+            
             return slides;
         }
 
