@@ -227,9 +227,33 @@
         };
 
         if (auth) {
-            onAuthStateChanged(auth, (u) => {
+            onAuthStateChanged(auth, async (u) => {
                 user = u;
                 if (user) {
+                    // AUTO-RECONNECT LOGIC: Check if user was in a room before refresh
+                    const savedRoom = localStorage.getItem('last_room');
+                    if (savedRoom) {
+                        try {
+                            const snap = await getDoc(getGameRef(savedRoom));
+                            if (snap.exists()) {
+                                const data = snap.data();
+                                let role = 'observer';
+                                if (data.players.blue === user.uid) role = 'blue';
+                                else if (data.players.red === user.uid) role = 'red';
+                                
+                                connEl.classList.add('hidden');
+                                enterRoom(savedRoom, role);
+                                return; // Skip showing the lobby
+                            } else {
+                                // Room no longer exists, clear storage
+                                localStorage.removeItem('last_room');
+                            }
+                        } catch (e) {
+                            console.warn("Auto-rejoin failed:", e);
+                        }
+                    }
+
+                    // If no active session, show the lobby
                     connEl.classList.add('hidden');
                     lobbyUiEl.classList.remove('hidden');
                 }
@@ -286,6 +310,10 @@
                     role = 'red';
                     await updateDoc(getGameRef(id), { 'players.red': user.uid });
                 }
+                
+                // SAVE SESSION so refresh works for joiners too
+                localStorage.setItem('last_room', id); 
+                
                 enterRoom(id, role);
             } catch (e) {
                 alert("Permission denied while trying to join room.");
@@ -355,6 +383,7 @@
                     render();
                 } else {
                     alert("Room was closed by the host.");
+                    localStorage.removeItem('last_room'); // CLEAR CACHE IF ROOM DELETED
                     location.reload();
                 }
             }, (err) => console.error("Snapshot error:", err));
@@ -653,6 +682,7 @@
         };
 
         window.leaveSession = () => {
+            localStorage.removeItem('last_room'); // CLEAR CACHE ON INTENTIONAL EXIT
             location.reload();
         };
 
@@ -664,6 +694,7 @@
                     console.error("Failed to destroy room:", e);
                 }
             }
+            localStorage.removeItem('last_room'); // CLEAR CACHE ON ROOM DESTRUCTION
             location.reload();
         };
 
