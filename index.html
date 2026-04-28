@@ -101,7 +101,10 @@
     <!-- MAIN GAME UI -->
     <div id="game-ui" class="hidden w-full max-w-6xl">
         <div class="flex justify-between items-center mb-8">
-            <button onclick="promptExit()" class="text-xs font-bold text-slate-500 hover:text-white transition-colors px-4 py-2 bg-slate-800 rounded-lg">← EXIT ROOM</button>
+            <div class="flex gap-2">
+                <button onclick="promptExit()" class="text-xs font-bold text-slate-500 hover:text-white transition-colors px-4 py-2 bg-slate-800 rounded-lg">← EXIT ROOM</button>
+                <button id="btn-global-undo" class="text-xs font-bold text-orange-400 hover:text-orange-300 transition-colors px-4 py-2 bg-slate-800 rounded-lg hidden">↶ REVERT LAST TURN</button>
+            </div>
             <div class="text-center">
                 <h2 id="room-display" class="text-xs font-mono text-blue-400">ROOM: ----</h2>
                 <h3 id="role-display" class="text-xs font-bold text-yellow-500 uppercase">PLAYER: ---</h3>
@@ -252,6 +255,7 @@
                 turn: 'blue', 
                 scores: { blue: 0, red: 0 },
                 history: { blue: [], red: [] },
+                historyStack: "[]",
                 players: { blue: user.uid, red: null },
                 lastAction: Date.now(),
                 liveState: null
@@ -321,6 +325,12 @@
                     }
                     if (!gameState.history) gameState.history = { blue: [], red: [] };
                     
+                    if (gameState.historyStack && typeof gameState.historyStack === 'string') {
+                        gameState.historyStack = JSON.parse(gameState.historyStack);
+                    } else if (!gameState.historyStack) {
+                        gameState.historyStack = [];
+                    }
+                    
                     // Unlock interactions once the turn safely passes back to us
                     if (gameState.turn === myRole) {
                         isCommitting = false;
@@ -382,6 +392,15 @@
 
         function render() {
             if (!gameState) return;
+            
+            const btnGlobalUndo = document.getElementById('btn-global-undo');
+            if (btnGlobalUndo) {
+                if (gameState.historyStack && gameState.historyStack.length > 0) {
+                    btnGlobalUndo.classList.remove('hidden');
+                } else {
+                    btnGlobalUndo.classList.add('hidden');
+                }
+            }
             
             let displayBoard = gameState.board;
             let displaySelected = null;
@@ -648,6 +667,41 @@
             location.reload();
         };
 
+        window.globalUndo = async () => {
+            if (isCommitting || !gameState || !gameState.historyStack || gameState.historyStack.length === 0) return; 
+            
+            isCommitting = true;
+            const btnGlobalUndo = document.getElementById('btn-global-undo');
+            btnGlobalUndo.innerText = "REVERTING...";
+            btnGlobalUndo.classList.add('opacity-50', 'pointer-events-none');
+
+            const stack = [...gameState.historyStack];
+            const prevState = stack.pop();
+
+            try {
+                await updateDoc(getGameRef(roomId), {
+                    board: JSON.stringify(prevState.board),
+                    turn: prevState.turn,
+                    scores: prevState.scores,
+                    history: prevState.history,
+                    historyStack: JSON.stringify(stack),
+                    lastAction: Date.now(),
+                    liveState: null
+                });
+                
+                turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
+            } catch (e) {
+                console.error("Global undo failed", e);
+                alert("Network error reverting turn. Please try again.");
+            } finally {
+                isCommitting = false;
+                btnGlobalUndo.innerText = "↶ REVERT LAST TURN";
+                btnGlobalUndo.classList.remove('opacity-50', 'pointer-events-none');
+                render();
+            }
+        };
+        document.getElementById('btn-global-undo').onclick = window.globalUndo;
+
         window.undoLocal = () => {
             if (isCommitting || !gameState || gameState.turn !== myRole) return; 
             turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
@@ -681,12 +735,22 @@
             
             const finalBoard = turnBoard || gameState.board;
             
+            let stack = gameState.historyStack || [];
+            stack.push({
+                board: gameState.board,
+                turn: gameState.turn,
+                scores: gameState.scores,
+                history: gameState.history
+            });
+            if (stack.length > 20) stack.shift(); // Keeps the last 20 turns
+            
             try {
                 await updateDoc(getGameRef(roomId), {
                     board: JSON.stringify(finalBoard),
                     turn: nextTurn,
                     scores: newScores,
                     history: newHistory,
+                    historyStack: JSON.stringify(stack),
                     lastAction: Date.now(),
                     liveState: null // Wipes ghost view perfectly
                 });
