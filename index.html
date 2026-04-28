@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Damath - Ultra Stable</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root { --board-dark: #064e3b; --board-light: #f1f5f9; }
+        .game-grid { display: grid; grid-template-columns: 240px 1fr 240px; gap: 24px; width: 100%; max-width: 1200px; }
+        @media (max-width: 1024px) { .game-grid { grid-template-columns: 1fr; } }
+        
+        /* Fixed Grid for Perfect Square */
+        .checker-board { 
+            display: grid; 
+            grid-template-columns: repeat(8, minmax(0, 1fr)); 
+            grid-template-rows: repeat(8, minmax(0, 1fr)); 
+            aspect-ratio: 1/1; 
+            width: 100%;
+            max-width: 65vh; /* Keep it from stretching out of view */
+            margin: 0 auto;
+            border: 8px solid #1e293b; 
+            background: #1e293b; 
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .square { display: flex; align-items: center; justify-content: center; position: relative; width: 100%; height: 100%; }
+        .square.dark { background-color: var(--board-dark); }
+        .square.light { background-color: var(--board-light); }
+        
+        /* Piece & Operator Rotation fixes */
+        .piece { 
+            width: 85%; height: 85%; border-radius: 50%; display: flex; align-items: center; justify-content: center; 
+            cursor: pointer; transition: all 0.2s ease; font-weight: 900; color: white; 
+            border: 3px solid rgba(255,255,255,0.2); z-index: 10;
+            transform: rotate(0deg) scale(1); /* Baseline */
+        }
+        .piece.selected { transform: rotate(0deg) scale(1.15); border-color: #fbbf24; box-shadow: 0 0 20px #fbbf24; z-index: 50; }
+        
+        .piece.blue { background: radial-gradient(circle at 30% 30%, #3b82f6, #1e3a8a); }
+        .piece.red { background: radial-gradient(circle at 30% 30%, #ef4444, #7f1d1d); }
+        
+        .operator { 
+            position: absolute; font-size: clamp(1.2rem, 3.5vw, 2rem); font-weight: 900; 
+            color: rgba(30, 41, 59, 0.3); text-shadow: 1px 1px 0px rgba(255,255,255,0.4); 
+            pointer-events: none; z-index: 5;
+            transform: rotate(0deg); 
+        }
+
+        /* Rotated Board Logic */
+        .board-rotated { transform: rotate(180deg); }
+        .board-rotated .piece { transform: rotate(180deg) scale(1); }
+        .board-rotated .piece.selected { transform: rotate(180deg) scale(1.15); }
+        .board-rotated .operator { transform: rotate(180deg); }
+
+        .valid-move::after { content: ''; width: 25%; height: 25%; background: #22c55e; border-radius: 50%; opacity: 0.8; box-shadow: 0 0 10px #22c55e; }
+        .active-turn { outline: 4px solid #fbbf24; box-shadow: 0 0 20px rgba(251,191,36,0.4); }
+        
+        .history-list { height: 180px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+        .history-item { font-family: monospace; padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.8rem; }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col items-center p-4 font-sans overflow-x-hidden">
+
+    <!-- Emergency Recovery UI -->
+    <div id="lobby" class="fixed inset-0 bg-slate-950 z-[100] flex items-center justify-center p-6">
+        <div class="bg-slate-900 p-8 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-md text-center">
+            <h1 class="text-4xl font-black mb-2 italic">DA<span class="text-blue-500">MATH</span></h1>
+            <p class="text-slate-400 text-sm mb-8">Multiplayer Battle</p>
+            
+            <div id="connection-status" class="mb-6">
+                <div class="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                <p class="text-blue-400 font-bold">Synchronizing with Database...</p>
+                <p id="retry-hint" class="text-[10px] text-slate-600 mt-4 hidden">Connection taking longer than usual...</p>
+            </div>
+
+            <div id="lobby-ui" class="hidden space-y-4">
+                <button id="btn-create" class="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl font-bold text-lg transition-all">Create Match</button>
+                <div class="flex items-center gap-3">
+                    <hr class="flex-1 border-slate-800"> <span class="text-xs text-slate-600 font-bold">OR</span> <hr class="flex-1 border-slate-800">
+                </div>
+                <input type="text" id="join-id" placeholder="Room ID (4 Digits)" class="w-full py-4 bg-slate-800 border border-slate-700 rounded-2xl text-center text-xl font-mono tracking-widest outline-none focus:border-blue-500 text-white uppercase">
+                <button id="btn-join" class="w-full py-4 bg-slate-700 hover:bg-slate-600 rounded-2xl font-bold transition-all">Join Match</button>
+            </div>
+
+            <div class="mt-12 pt-6 border-t border-slate-800">
+                <p class="text-[10px] text-slate-500 uppercase font-black mb-3">System Recovery:</p>
+                <button id="btn-reset" class="w-full py-3 bg-red-900/50 hover:bg-red-600 text-red-200 text-xs font-black rounded-xl border border-red-800/50 transition-all uppercase tracking-widest">
+                    Force Clear & Restart
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN GAME UI -->
+    <div id="game-ui" class="hidden w-full max-w-6xl">
+        <div class="flex justify-between items-center mb-8">
+            <button onclick="location.reload()" class="text-xs font-bold text-slate-500 hover:text-white transition-colors px-4 py-2 bg-slate-800 rounded-lg">← EXIT ROOM</button>
+            <div class="text-center">
+                <h2 id="room-display" class="text-xs font-mono text-blue-400">ROOM: ----</h2>
+                <h3 id="role-display" class="text-xs font-bold text-yellow-500 uppercase">PLAYER: ---</h3>
+            </div>
+            <div class="w-[100px]"></div>
+        </div>
+
+        <div class="game-grid">
+            <!-- Blue Stats -->
+            <div id="panel-blue" style="order: 1;" class="bg-slate-800/50 p-6 rounded-3xl border border-slate-700 h-fit transition-all duration-500">
+                <p class="text-[10px] font-black text-blue-400 mb-2 uppercase tracking-widest">Blue Score</p>
+                <p id="score-blue" class="text-5xl font-mono font-black mb-4 text-blue-100">0</p>
+                <div class="text-[10px] font-bold uppercase text-slate-500 text-left px-2 border-b border-slate-700 pb-1 mb-2">Capture Log</div>
+                <div id="log-blue" class="history-list text-blue-300"></div>
+            </div>
+
+            <!-- Board -->
+            <div id="board-container" style="order: 2;" class="flex flex-col gap-6 items-center w-full min-w-0">
+                <div id="board" class="checker-board rounded-xl shadow-2xl overflow-hidden ring-1 ring-white/10"></div>
+                
+                <div class="w-full bg-slate-800 p-4 rounded-2xl border border-slate-700 text-center shadow-inner max-w-[65vh]">
+                    <p id="turn-status" class="font-bold text-lg text-blue-400 italic">Initializing...</p>
+                    <div id="actions" class="mt-4 flex gap-2 hidden">
+                        <button id="btn-undo" class="flex-1 bg-slate-700 hover:bg-slate-600 py-3 rounded-xl text-xs font-bold transition-colors">UNDO MOVE</button>
+                        <button id="btn-commit" class="flex-[2] bg-green-600 hover:bg-green-500 py-3 rounded-xl text-xs font-black transition-colors shadow-lg">END TURN</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Red Stats -->
+            <div id="panel-red" style="order: 3;" class="bg-slate-800/50 p-6 rounded-3xl border border-slate-700 h-fit transition-all duration-500">
+                <p class="text-[10px] font-black text-red-400 mb-2 uppercase tracking-widest">Red Score</p>
+                <p id="score-red" class="text-5xl font-mono font-black mb-4 text-red-100">0</p>
+                <div class="text-[10px] font-bold uppercase text-slate-500 text-left px-2 border-b border-slate-700 pb-1 mb-2">Capture Log</div>
+                <div id="log-red" class="history-list text-red-300"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signOut, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global State & Config Setup
+        let firebaseConfig;
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+        } else {
+            firebaseConfig = {
+                apiKey: "AIzaSyCsauqSlcJ9lVf4dqy9YmWQAZRZ8DQrVBo",
+                authDomain: "damath-ba689.firebaseapp.com",
+                projectId: "damath-ba689",
+                storageBucket: "damath-ba689.firebasestorage.app",
+                messagingSenderId: "37396916011",
+                appId: "1:37396916011:web:1ccbe20b5cbac860f3076e"
+            };
+        }
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'damath-stable-v2';
+        
+        let app, auth, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        } catch (e) {
+            console.error("Firebase Initialization Error:", e);
+        }
+
+        let user = null;
+        let roomId = null;
+        let myRole = null;
+        let gameState = null;
+        let unsub = null;
+
+        // Turn Management State
+        let selected = null;
+        let moves = [];
+        let turnBoard = null; 
+        let tempScore = 0;
+        let tempLogs = [];
+        let jumpChain = false;
+
+        // Operators map logically 1:1 with the DOM rendering row by row (placed on odd squares)
+        const boardOps = [
+            [null, '×', null, '÷', null, '-', null, '+'],
+            ['÷', null, '×', null, '+', null, '-', null],
+            [null, '-', null, '+', null, '×', null, '÷'],
+            ['+', null, '-', null, '÷', null, '×', null],
+            [null, '×', null, '÷', null, '-', null, '+'],
+            ['÷', null, '×', null, '+', null, '-', null],
+            [null, '-', null, '+', null, '×', null, '÷'],
+            ['+', null, '-', null, '÷', null, '×', null]
+        ];
+
+        // UI Helpers
+        const lobbyEl = document.getElementById('lobby');
+        const lobbyUiEl = document.getElementById('lobby-ui');
+        const connEl = document.getElementById('connection-status');
+        const gameUiEl = document.getElementById('game-ui');
+
+        const initAuth = async () => {
+            if (!auth) {
+                connEl.innerHTML = `<p class="text-red-400 font-bold mb-4">Firebase Config Missing</p>`;
+                lobbyUiEl.classList.remove('hidden');
+                return;
+            }
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                connEl.innerHTML = `<p class="text-red-400 text-sm font-bold mb-4">Authentication failed. Check Firebase rules.</p>`;
+                lobbyUiEl.classList.remove('hidden');
+            }
+        };
+
+        if (auth) {
+            onAuthStateChanged(auth, (u) => {
+                user = u;
+                if (user) {
+                    connEl.classList.add('hidden');
+                    lobbyUiEl.classList.remove('hidden');
+                }
+            });
+            initAuth();
+        }
+
+        setTimeout(() => {
+            if (connEl && !connEl.classList.contains('hidden')) {
+                document.getElementById('retry-hint').classList.remove('hidden');
+            }
+        }, 3000);
+
+        const getGameRef = (id) => doc(db, 'games', id);
+
+        window.createGame = async () => {
+            if (!user) return alert("Not authenticated.");
+            const id = Math.floor(1000 + Math.random() * 9000).toString();
+            const initialBoard = generateBoard();
+            const data = {
+                id, 
+                board: JSON.stringify(initialBoard), 
+                turn: 'blue', 
+                scores: { blue: 0, red: 0 },
+                history: { blue: [], red: [] },
+                players: { blue: user.uid, red: null },
+                lastAction: Date.now()
+            };
+            try {
+                await setDoc(getGameRef(id), data);
+                localStorage.setItem('last_room', id);
+                enterRoom(id, 'blue');
+            } catch (e) {
+                alert("Failed to create match. Missing database permissions.");
+            }
+        };
+
+        window.joinGame = async () => {
+            if (!user) return alert("Not authenticated.");
+            const id = document.getElementById('join-id').value.trim();
+            if (!id) return;
+            try {
+                const snap = await getDoc(getGameRef(id));
+                if (!snap.exists()) {
+                    alert("Room ID not found.");
+                    return;
+                }
+                const data = snap.data();
+                let role = 'observer';
+                if (data.players.blue === user.uid) role = 'blue';
+                else if (!data.players.red || data.players.red === user.uid) {
+                    role = 'red';
+                    await updateDoc(getGameRef(id), { 'players.red': user.uid });
+                }
+                enterRoom(id, role);
+            } catch (e) {
+                alert("Permission denied while trying to join room.");
+            }
+        };
+
+        window.emergencyHardReset = async () => {
+            const btn = event.target;
+            btn.innerText = "PURGING...";
+            try {
+                const lastRoom = localStorage.getItem('last_room');
+                if (lastRoom && db) {
+                    await deleteDoc(getGameRef(lastRoom));
+                }
+                localStorage.clear();
+                if (auth) await signOut(auth);
+            } catch(e) {}
+            location.reload();
+        };
+
+        function enterRoom(id, role) {
+            roomId = id;
+            myRole = role;
+            lobbyEl.classList.add('hidden');
+            gameUiEl.classList.remove('hidden');
+            document.getElementById('room-display').innerText = `ROOM: ${id}`;
+            document.getElementById('role-display').innerText = `PLAYER: ${role.toUpperCase()}`;
+            
+            // --- FIX FOR BOARD AND SIDEBAR ORIENTATION ---
+            const boardEl = document.getElementById('board');
+            const panelBlue = document.getElementById('panel-blue');
+            const panelRed = document.getElementById('panel-red');
+            
+            if (role === 'red') {
+                boardEl.classList.add('board-rotated');
+                panelBlue.style.order = 3;
+                panelRed.style.order = 1;
+            } else {
+                boardEl.classList.remove('board-rotated');
+                panelBlue.style.order = 1;
+                panelRed.style.order = 3;
+            }
+            
+            if (unsub) unsub();
+            unsub = onSnapshot(getGameRef(id), (snap) => {
+                if (snap.exists()) {
+                    gameState = snap.data();
+                    gameState.board = JSON.parse(gameState.board);
+                    if (!gameState.history) gameState.history = { blue: [], red: [] };
+                    
+                    if (gameState.turn !== myRole) {
+                        undoLocal(); // Force clean local state if remote updates
+                    } else {
+                        render();
+                    }
+                } else {
+                    alert("Room was closed by the host.");
+                    location.reload();
+                }
+            }, (err) => console.error("Snapshot error:", err));
+        }
+
+        // Fix for Pieces strictly on playable squares
+        function generateBoard() {
+            let b = Array(8).fill(null).map(() => Array(8).fill(null));
+            const add = (r, c, col, val) => b[r][c] = { color: col, val, dama: false };
+            
+            // Red Pieces (Top Side)
+            // Row 0: cols 0, 2, 4, 6
+            add(0, 0, 'red', 2); add(0, 2, 'red', -5); add(0, 4, 'red', 8); add(0, 6, 'red', -11);
+            // Row 1: cols 1, 3, 5, 7
+            add(1, 1, 'red', -7); add(1, 3, 'red', 10); add(1, 5, 'red', -3); add(1, 7, 'red', 0);
+            // Row 2: cols 0, 2, 4, 6
+            add(2, 0, 'red', 4); add(2, 2, 'red', -1); add(2, 4, 'red', 6); add(2, 6, 'red', -9);
+
+            // Blue Pieces (Bottom Side)
+            // Row 5: cols 1, 3, 5, 7
+            add(5, 1, 'blue', -9); add(5, 3, 'blue', 6); add(5, 5, 'blue', -1); add(5, 7, 'blue', 4);
+            // Row 6: cols 0, 2, 4, 6
+            add(6, 0, 'blue', 0); add(6, 2, 'blue', -3); add(6, 4, 'blue', 10); add(6, 6, 'blue', -7);
+            // Row 7: cols 1, 3, 5, 7
+            add(7, 1, 'blue', -11); add(7, 3, 'blue', 8); add(7, 5, 'blue', -5); add(7, 7, 'blue', 2);
+            
+            return b;
+        }
+
+        function render() {
+            if (!gameState) return;
+            const boardEl = document.getElementById('board');
+            boardEl.innerHTML = '';
+            const b = turnBoard || gameState.board;
+
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const sq = document.createElement('div');
+                    const isPlayable = (r + c) % 2 !== 0; // Damath pieces/operators go on dark squares
+                    sq.className = `square ${isPlayable ? 'dark' : 'light'}`;
+                    
+                    const op = boardOps[r][c];
+                    if (op) {
+                        sq.innerHTML = `<span class="operator">${op}</span>`;
+                    }
+
+                    const p = b[r][c];
+                    if (p) {
+                        const pEl = document.createElement('div');
+                        let underline = (p.val === 6 || p.val === 9 || p.val === -6 || p.val === -9) ? 'underline underline-offset-4' : '';
+                        pEl.className = `piece ${p.color} ${underline} ${p.dama ? 'ring-[4px] ring-yellow-400 ring-offset-2 ring-offset-[#1e293b]' : ''}`;
+                        if (selected && selected.r === r && selected.c === c) pEl.classList.add('selected');
+                        pEl.innerText = p.val;
+                        pEl.onclick = () => handlePieceClick(r, c);
+                        sq.appendChild(pEl);
+                    }
+
+                    const isMove = moves.some(m => m.r === r && m.c === c);
+                    if (isMove) {
+                        sq.classList.add('valid-move', 'cursor-pointer');
+                        sq.onclick = () => executeMove(r, c);
+                    }
+                    boardEl.appendChild(sq);
+                }
+            }
+
+            // Real-time floating point scores
+            document.getElementById('score-blue').innerText = gameState.scores.blue % 1 === 0 ? gameState.scores.blue : gameState.scores.blue.toFixed(2);
+            document.getElementById('score-red').innerText = gameState.scores.red % 1 === 0 ? gameState.scores.red : gameState.scores.red.toFixed(2);
+            document.getElementById('panel-blue').classList.toggle('active-turn', gameState.turn === 'blue');
+            document.getElementById('panel-red').classList.toggle('active-turn', gameState.turn === 'red');
+            
+            ['blue', 'red'].forEach(color => {
+                const logEl = document.getElementById(`log-${color}`);
+                if (logEl) {
+                    const arr = gameState.history[color] || [];
+                    logEl.innerHTML = arr.map(item => `<div class="history-item">${item}</div>`).join('');
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+            });
+
+            const status = document.getElementById('turn-status');
+            if (gameState.turn === myRole) {
+                status.innerText = jumpChain ? "JUMP REQUIRED!" : (turnBoard ? "CONFIRM TURN" : "YOUR MOVE");
+                status.className = "font-black text-xl text-green-400 animate-pulse uppercase";
+                document.getElementById('actions').classList.toggle('hidden', !turnBoard);
+            } else {
+                status.innerText = `${gameState.turn.toUpperCase()}'S TURN`;
+                status.className = "font-bold text-slate-500 italic";
+                document.getElementById('actions').classList.add('hidden');
+            }
+        }
+
+        function handlePieceClick(r, c) {
+            if (gameState.turn !== myRole || (turnBoard && !jumpChain)) return;
+            const p = (turnBoard || gameState.board)[r][c];
+            if (!p || p.color !== myRole) return;
+            if (jumpChain && (selected.r !== r || selected.c !== c)) return;
+
+            selected = { r, c };
+            moves = getAvailableMoves(r, c, turnBoard || gameState.board, jumpChain);
+            render();
+        }
+
+        function executeMove(tr, tc) {
+            const move = moves.find(m => m.r === tr && m.c === tc);
+            if (!move) return;
+
+            if (!turnBoard) turnBoard = JSON.parse(JSON.stringify(gameState.board));
+            const p = turnBoard[selected.r][selected.c];
+            
+            if (move.cap) {
+                const victim = turnBoard[move.cap.r][move.cap.c];
+                const op = boardOps[tr][tc] || '+';
+                let rawPts = 0;
+                const v1 = p.val;
+                const v2 = victim.val;
+                
+                if (op === '+') rawPts = v1 + v2;
+                else if (op === '-') rawPts = v1 - v2;
+                else if (op === '×') rawPts = v1 * v2;
+                else if (op === '÷') rawPts = v2 !== 0 ? v1 / v2 : v1;
+                
+                if (p.dama) rawPts *= 2;
+                tempScore += rawPts;
+                
+                const formattedPts = rawPts % 1 === 0 ? rawPts : rawPts.toFixed(2);
+                const damaPrefix = p.dama ? '2 × ' : '';
+                tempLogs.push(`${damaPrefix}(${v1} ${op} ${v2}) = ${formattedPts}`);
+
+                turnBoard[move.cap.r][move.cap.c] = null;
+            }
+
+            turnBoard[tr][tc] = p;
+            turnBoard[selected.r][selected.c] = null;
+            selected = { r: tr, c: tc };
+
+            const nextJumps = getAvailableMoves(tr, tc, turnBoard, true);
+            if (nextJumps.length > 0 && move.cap) {
+                jumpChain = true;
+                moves = nextJumps;
+            } else {
+                jumpChain = false;
+                moves = [];
+                // Promote logic (Blue promotes at bottom row 7, Red at top row 0)
+                if ((myRole === 'blue' && tr === 7) || (myRole === 'red' && tr === 0)) p.dama = true;
+            }
+            render();
+        }
+
+        function getAvailableMoves(r, c, b, onlyJumps = false) {
+            const p = b[r][c];
+            const jumps = [];
+            const slides = [];
+            const allDirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+            // Blue moves "up" (decreasing r), Red moves "down" (increasing r)
+            const forwardDirs = p.color === 'blue' ? [[-1,-1],[-1,1]] : [[1,-1],[1,1]];
+            const dirs = p.dama ? allDirs : forwardDirs;
+
+            allDirs.forEach(([dr, dc]) => {
+                const mr = r + dr, mc = c + dc;
+                const tr = r + dr*2, tc = c + dc*2;
+                if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8) {
+                    const mid = b[mr][mc];
+                    if (mid && mid.color !== p.color && !b[tr][tc]) {
+                        jumps.push({ r: tr, c: tc, cap: { r: mr, c: mc } });
+                    }
+                }
+            });
+
+            if (jumps.length > 0) return jumps;
+            if (onlyJumps) return [];
+
+            dirs.forEach(([dr, dc]) => {
+                const tr = r + dr, tc = c + dc;
+                if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8 && !b[tr][tc]) {
+                    slides.push({ r: tr, c: tc });
+                }
+            });
+            return slides;
+        }
+
+        // Binds
+        document.getElementById('btn-create').onclick = () => window.createGame();
+        document.getElementById('btn-join').onclick = () => window.joinGame();
+        document.getElementById('btn-reset').onclick = () => window.emergencyHardReset();
+        
+        window.undoLocal = () => {
+            turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
+            render();
+        };
+        document.getElementById('btn-undo').onclick = window.undoLocal;
+
+        window.commitTurn = async () => {
+            const nextTurn = gameState.turn === 'blue' ? 'red' : 'blue';
+            const newScores = { ...gameState.scores };
+            newScores[myRole] += tempScore;
+            
+            const newHistory = { 
+                blue: [...(gameState.history.blue || [])], 
+                red: [...(gameState.history.red || [])] 
+            };
+
+            if (tempLogs.length > 0) newHistory[myRole].push(...tempLogs);
+            
+            await updateDoc(getGameRef(roomId), {
+                board: JSON.stringify(turnBoard),
+                turn: nextTurn,
+                scores: newScores,
+                history: newHistory,
+                lastAction: Date.now()
+            });
+            
+            window.undoLocal(); // Clears local temp vars
+        };
+        document.getElementById('btn-commit').onclick = window.commitTurn;
+
+    </script>
+</body>
+</html>
