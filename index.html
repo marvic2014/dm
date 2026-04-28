@@ -192,7 +192,7 @@
         let tempScore = 0;
         let tempLogs = [];
         let jumpChain = false;
-        let isCommitting = false; // Added: Locks board while sending turn to DB
+        let isCommitting = false; // System lock for network writes
 
         // Operators mapping perfectly to playable tiles (Even squares / r+c % 2 === 0)
         const boardOps = [
@@ -317,7 +317,6 @@
             document.getElementById('room-display').innerText = `ROOM: ${id}`;
             document.getElementById('role-display').innerText = `PLAYER: ${role.toUpperCase()}`;
             
-            // Mirror Orientation: Red's board rotates, Blue stays normal
             const boardEl = document.getElementById('board');
             const panelBlue = document.getElementById('panel-blue');
             const panelRed = document.getElementById('panel-red');
@@ -343,9 +342,25 @@
                     }
                     if (!gameState.history) gameState.history = { blue: [], red: [] };
                     
-                    // Clear local draft if turn shifted remotely
-                    if (gameState.turn !== myRole && turnBoard) {
+                    // Unlock interactions once the turn safely passes back to us
+                    if (gameState.turn === myRole) {
+                        isCommitting = false;
+                    }
+
+                    // Strict State Flush: If it's not our turn, completely wipe the drafting board
+                    if (gameState.turn !== myRole) {
                         turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
+                        
+                        // Guarantee buttons are reset to normal appearance
+                        const btnCommit = document.getElementById('btn-commit');
+                        const btnUndo = document.getElementById('btn-undo');
+                        if (btnCommit) {
+                            btnCommit.innerText = "END TURN";
+                            btnCommit.classList.remove('opacity-50', 'pointer-events-none');
+                        }
+                        if (btnUndo) {
+                            btnUndo.classList.remove('opacity-50', 'pointer-events-none');
+                        }
                     }
                     
                     render();
@@ -360,7 +375,6 @@
             let b = Array(8).fill(null).map(() => Array(8).fill(null));
             const add = (r, c, col, val) => b[r][c] = { color: col, val, dama: false };
             
-            // Playable tiles are evenly positioned `(r+c)%2 === 0`
             // Red Pieces (Top Side)
             add(0, 0, 'red', 2); add(0, 2, 'red', -5); add(0, 4, 'red', 8); add(0, 6, 'red', -11);
             add(1, 1, 'red', -7); add(1, 3, 'red', 10); add(1, 5, 'red', -3); add(1, 7, 'red', 0);
@@ -374,9 +388,9 @@
             return b;
         }
 
-        // REAL-TIME SYNC - Pushes ghost updates directly to Firestore so opponent sees moves live
+        // REAL-TIME SYNC
         function pushLiveState() {
-            if (!roomId || !user || isCommitting) return; // Prevent live updates during commit
+            if (!roomId || !user || isCommitting) return; 
             updateDoc(getGameRef(roomId), {
                 liveState: JSON.stringify({
                     board: turnBoard,
@@ -390,7 +404,6 @@
         function render() {
             if (!gameState) return;
             
-            // Determine whose vision we are rendering based on real-time sync
             let displayBoard = gameState.board;
             let displaySelected = null;
             let displayScoreBlue = gameState.scores.blue;
@@ -400,7 +413,6 @@
             let isLiveOpponent = false;
 
             if (gameState.turn === myRole) {
-                // Showing my local drafting
                 displayBoard = turnBoard || gameState.board;
                 displaySelected = selected;
                 if (myRole === 'blue') displayScoreBlue += tempScore;
@@ -409,7 +421,6 @@
                 if (myRole === 'blue' && tempLogs.length) displayLogsBlue = [...displayLogsBlue, ...tempLogs];
                 if (myRole === 'red' && tempLogs.length) displayLogsRed = [...displayLogsRed, ...tempLogs];
             } else if (gameState.liveState) {
-                // Showing opponent's drafting via live real-time state!
                 displayBoard = gameState.liveState.board || gameState.board;
                 displaySelected = gameState.liveState.selected;
                 isLiveOpponent = true;
@@ -428,7 +439,6 @@
                 for (let c = 0; c < 8; c++) {
                     const sq = document.createElement('div');
                     
-                    // The White/Light tiles are strictly the playable ones
                     const isPlayable = (r + c) % 2 === 0;
                     sq.className = `square ${isPlayable ? 'light' : 'dark'}`;
                     
@@ -443,7 +453,6 @@
                         let underline = (p.val === 6 || p.val === 9 || p.val === -6 || p.val === -9) ? 'underline underline-offset-4' : '';
                         pEl.className = `piece ${p.color} ${underline} ${p.dama ? 'ring-[4px] ring-yellow-400 ring-offset-2 ring-offset-[#f1f5f9]' : ''}`;
                         
-                        // Opponent's live selection pulses softly
                         if (displaySelected && displaySelected.r === r && displaySelected.c === c) {
                             pEl.classList.add('selected');
                             if (isLiveOpponent) pEl.classList.add('animate-pulse');
@@ -454,8 +463,7 @@
                         sq.appendChild(pEl);
                     }
 
-                    // Only show valid targets if it's MY turn
-                    if (gameState.turn === myRole) {
+                    if (gameState.turn === myRole && !isCommitting) {
                         const isMove = moves.some(m => m.r === r && m.c === c);
                         if (isMove) {
                             sq.classList.add('valid-move', 'cursor-pointer');
@@ -466,13 +474,11 @@
                 }
             }
 
-            // Real-time floating point scores dynamically merged
             document.getElementById('score-blue').innerText = displayScoreBlue % 1 === 0 ? displayScoreBlue : displayScoreBlue.toFixed(2);
             document.getElementById('score-red').innerText = displayScoreRed % 1 === 0 ? displayScoreRed : displayScoreRed.toFixed(2);
             document.getElementById('panel-blue').classList.toggle('active-turn', gameState.turn === 'blue');
             document.getElementById('panel-red').classList.toggle('active-turn', gameState.turn === 'red');
             
-            // Sync history
             const logBlueEl = document.getElementById('log-blue');
             if (logBlueEl) {
                 logBlueEl.innerHTML = displayLogsBlue.map(item => `<div class="history-item">${item}</div>`).join('');
@@ -497,7 +503,7 @@
         }
 
         function handlePieceClick(r, c) {
-            if (isCommitting || gameState.turn !== myRole || (turnBoard && !jumpChain)) return; // Added isCommitting guard
+            if (isCommitting || gameState.turn !== myRole || (turnBoard && !jumpChain)) return; 
             const p = (turnBoard || gameState.board)[r][c];
             if (!p || p.color !== myRole) return;
             if (jumpChain && (selected.r !== r || selected.c !== c)) return;
@@ -505,12 +511,12 @@
             selected = { r, c };
             moves = getAvailableMoves(r, c, turnBoard || gameState.board, jumpChain);
             
-            pushLiveState(); // Real-time emit to opponent
+            pushLiveState(); 
             render();
         }
 
         function executeMove(tr, tc) {
-            if (isCommitting) return; // Added isCommitting guard
+            if (isCommitting) return; 
             const move = moves.find(m => m.r === tr && m.c === tc);
             if (!move) return;
 
@@ -550,11 +556,10 @@
             } else {
                 jumpChain = false;
                 moves = [];
-                // Promote logic (Blue promotes at bottom row 0 visually, Red at top row 7 visually)
                 if ((myRole === 'blue' && tr === 0) || (myRole === 'red' && tr === 7)) p.dama = true;
             }
             
-            pushLiveState(); // Real-time emit
+            pushLiveState();
             render();
         }
 
@@ -563,11 +568,9 @@
             const jumps = [];
             const slides = [];
             const allDirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
-            // Blue moves "up" (decreasing r), Red moves "down" (increasing r)
             const forwardDirs = p.color === 'blue' ? [[-1,-1],[-1,1]] : [[1,-1],[1,1]];
 
             if (p.dama) {
-                // Flying King (Dama) Logic - slides and jumps any number of squares in all directions
                 allDirs.forEach(([dr, dc]) => {
                     let step = 1;
                     let foundPiece = false;
@@ -583,19 +586,15 @@
 
                         if (!currentSquare) {
                             if (!foundPiece) {
-                                // Empty square and haven't jumped yet -> Valid Slide
                                 slides.push({ r: tr, c: tc });
                             } else {
-                                // Empty square AFTER jumping a piece -> Valid Landing Spot
                                 jumps.push({ r: tr, c: tc, cap: victim });
                             }
                         } else {
                             if (!foundPiece && currentSquare.color !== p.color) {
-                                // Found first opponent piece to jump over
                                 foundPiece = true;
                                 victim = { r: tr, c: tc };
                             } else {
-                                // Either hit our own piece, or hit a second piece blocking the path
                                 break;
                             }
                         }
@@ -603,8 +602,6 @@
                     }
                 });
             } else {
-                // Normal Piece Logic
-                // Normal pieces can capture forward OR backward (Official Damath Rule)
                 allDirs.forEach(([dr, dc]) => {
                     const mr = r + dr, mc = c + dc;
                     const tr = r + dr*2, tc = c + dc*2;
@@ -616,7 +613,6 @@
                     }
                 });
 
-                // Normal pieces can only slide forward
                 forwardDirs.forEach(([dr, dc]) => {
                     const tr = r + dr, tc = c + dc;
                     if (tr >= 0 && tr < 8 && tc >= 0 && tc < 8 && !b[tr][tc]) {
@@ -625,10 +621,8 @@
                 });
             }
 
-            // Forced Jumps: If a jump is available, it is the only legal move
             if (jumps.length > 0) return jumps;
             if (onlyJumps) return [];
-            
             return slides;
         }
 
@@ -640,7 +634,6 @@
         // EXIT HANDLING
         window.promptExit = () => {
             if (!gameState || !user) return location.reload();
-            // The creator is assigned to Blue
             const isHost = gameState.players.blue === user.uid;
             
             const modal = document.getElementById('exit-modal');
@@ -678,18 +671,19 @@
         };
 
         window.undoLocal = () => {
-            if (isCommitting || !gameState || gameState.turn !== myRole) return; // Added Guards
+            if (isCommitting || !gameState || gameState.turn !== myRole) return; 
             turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
-            pushLiveState(); // Emit the cancellation
+            pushLiveState(); 
             render();
         };
         document.getElementById('btn-undo').onclick = window.undoLocal;
 
         window.commitTurn = async () => {
-            if (isCommitting || !gameState || gameState.turn !== myRole) return; // Added Guards
+            if (isCommitting || !gameState || gameState.turn !== myRole) return; 
+            
+            // ACTIVATE STATE LOCK: Disables local buttons instantly
             isCommitting = true;
             
-            // Visual feedback and disable buttons to prevent double-clicking
             const btnCommit = document.getElementById('btn-commit');
             const btnUndo = document.getElementById('btn-undo');
             btnCommit.innerText = "SAVING...";
@@ -719,12 +713,15 @@
                     liveState: null // Wipes ghost view perfectly
                 });
                 
-                // Clear local draft state so UI doesn't stutter on flush
-                turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
+                // Do NOT clear turnBoard manually here anymore!
+                // The onSnapshot listener will safely clear the board exactly when the server registers the turn.
+                // This eliminates the split-second window where the board could visually undo itself.
+
             } catch (e) {
                 console.error("End turn failed", e);
                 alert("Network error ending turn. Please try again.");
-            } finally {
+                
+                // Only release the lock if an actual network error prevented the turn from saving
                 isCommitting = false;
                 btnCommit.innerText = "END TURN";
                 btnCommit.classList.remove('opacity-50', 'pointer-events-none');
