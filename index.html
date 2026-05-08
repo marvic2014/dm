@@ -398,7 +398,7 @@
             }
         };
 
-        // WARNING SYSTEM
+        // WARNING SYSTEM (Universal for ALL modes)
         window.issueWarning = async (type) => {
             if (isCommitting || !gameState) return;
             isCommitting = true;
@@ -824,13 +824,13 @@
             }
         }
 
-        // Helper to check forced captures globally
+        // Helper to check forced captures globally across the board
         function hasAnyJumpAvailable(b, color) {
             for (let r = 0; r < 8; r++) {
                 for (let c = 0; c < 8; c++) {
                     const p = b[r][c];
                     if (p && p.color === color) {
-                        const jumps = getAvailableMoves(r, c, b, true); // onlyJumps = true
+                        const jumps = getAvailableMoves(r, c, b, true); 
                         if (jumps.length > 0) return true;
                     }
                 }
@@ -858,6 +858,7 @@
             if (!move) return;
 
             // FORCED CAPTURE RULE CHECK (If they slide while a jump is available)
+            // Applied unconditionally to all modes!
             if (!move.cap) {
                 if (hasAnyJumpAvailable(turnBoard || gameState.board, myRole)) {
                     window.issueWarning('ignored_capture');
@@ -1207,6 +1208,7 @@
             if (isCommitting || !gameState || gameState.turn !== myRole) return; 
             
             // MISSING CAPTURES PENALTY
+            // Applied unconditionally to all modes!
             if (jumpChain) {
                 window.issueWarning('missed_capture');
                 return;
