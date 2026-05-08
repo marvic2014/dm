@@ -81,7 +81,7 @@
                         <input type="checkbox" id="use-calculation" checked class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 bg-slate-900 border-slate-600">
                         <span class="text-white font-bold">Enable Math Calculations</span>
                     </label>
-                    <p class="text-[10px] text-slate-400 ml-8 mb-4">If disabled, captures award 1 pt (2 for Dama). Operators remain visible for manual calculation.</p>
+                    <p class="text-[10px] text-slate-400 ml-8 mb-4">If disabled, captures award 1 point. Operators remain visible for manual calculation.</p>
 
                     <label class="flex items-center space-x-3 cursor-pointer mb-3">
                         <input type="checkbox" id="use-timer" onchange="document.getElementById('timer-settings').classList.toggle('hidden', !this.checked)" class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 bg-slate-900 border-slate-600">
@@ -440,7 +440,9 @@
                     if (type === 'timeout') {
                         alert(`Time's up! You received a warning (${newWarnings[myRole]}/3). Make a move!`);
                     } else if (type === 'missed_capture') {
-                        alert(`You must capture all possible pieces! Warning received (${newWarnings[myRole]}/3).`);
+                        alert(`You must capture all possible pieces in the chain! Warning received (${newWarnings[myRole]}/3).`);
+                    } else if (type === 'ignored_capture') {
+                        alert(`You ignored a possible capture somewhere on the board! Warning received (${newWarnings[myRole]}/3).`);
                     }
                 }
             } catch (e) {
@@ -472,7 +474,7 @@
                 const turnElapsed = now - gameState.turnStartTime;
                 const turnLeft = Math.max(0, gameState.settings.turnDurationMs - turnElapsed);
 
-                // MATCH Timer
+                // MATCH Timer (Should be globally visible to both)
                 const matchTimerEl = document.getElementById('match-timer-display');
                 matchTimerEl.classList.remove('hidden');
                 const mMin = Math.floor(matchLeft / 60000);
@@ -734,6 +736,7 @@
                     const isPlayable = (r + c) % 2 === 0;
                     sq.className = `square ${isPlayable ? 'light' : 'dark'}`;
                     
+                    // Always show mathematical operators visually
                     const op = boardOps[r][c];
                     if (op && isPlayable) {
                         sq.innerHTML = `<span class="operator">${op}</span>`;
@@ -821,6 +824,20 @@
             }
         }
 
+        // Helper to check forced captures globally
+        function hasAnyJumpAvailable(b, color) {
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const p = b[r][c];
+                    if (p && p.color === color) {
+                        const jumps = getAvailableMoves(r, c, b, true); // onlyJumps = true
+                        if (jumps.length > 0) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         function handlePieceClick(r, c) {
             if (!gameState.players.red) return; 
             if (isCommitting || gameState.turn !== myRole || (turnBoard && !jumpChain)) return; 
@@ -840,6 +857,17 @@
             const move = moves.find(m => m.r === tr && m.c === tc);
             if (!move) return;
 
+            // FORCED CAPTURE RULE CHECK (If they slide while a jump is available)
+            if (!move.cap) {
+                if (hasAnyJumpAvailable(turnBoard || gameState.board, myRole)) {
+                    window.issueWarning('ignored_capture');
+                    turnBoard = null; selected = null; moves = []; tempScore = 0; tempLogs = []; jumpChain = false;
+                    pushLiveState();
+                    render();
+                    return;
+                }
+            }
+
             if (!turnBoard) turnBoard = JSON.parse(JSON.stringify(gameState.board));
             const p = turnBoard[selected.r][selected.c];
             
@@ -851,8 +879,8 @@
                 const v2 = victim.val;
                 
                 if (gameState.settings && gameState.settings.useCalculation === false) {
-                    rawPts = p.dama ? 2 : 1;
-                    logText = `Capture = ${rawPts}`;
+                    rawPts = 1; // Simplistic Piece Capture Counter
+                    logText = `Captured Piece (${v2})`;
                 } else {
                     const op = boardOps[tr][tc] || '+';
                     if (op === '+') rawPts = v1 + v2;
