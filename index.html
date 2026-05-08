@@ -75,8 +75,14 @@
             </div>
 
             <div id="lobby-ui" class="hidden space-y-4">
-                <!-- Timer Settings -->
+                <!-- Game Settings -->
                 <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 text-left">
+                    <label class="flex items-center space-x-3 cursor-pointer mb-1">
+                        <input type="checkbox" id="use-calculation" checked class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 bg-slate-900 border-slate-600">
+                        <span class="text-white font-bold">Enable Math Calculations</span>
+                    </label>
+                    <p class="text-[10px] text-slate-400 ml-8 mb-4">If disabled, captures award 1 pt (2 for Dama). Operators remain visible for manual calculation.</p>
+
                     <label class="flex items-center space-x-3 cursor-pointer mb-3">
                         <input type="checkbox" id="use-timer" onchange="document.getElementById('timer-settings').classList.toggle('hidden', !this.checked)" class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 bg-slate-900 border-slate-600">
                         <span class="text-white font-bold">Enable Game Timers</span>
@@ -324,6 +330,7 @@
             const initialBoard = generateBoard();
             
             const useTimer = document.getElementById('use-timer').checked;
+            const useCalculation = document.getElementById('use-calculation').checked;
             const gameMins = parseInt(document.getElementById('game-mins').value) || 20;
             const turnSecs = parseInt(document.getElementById('turn-secs').value) || 60;
             
@@ -342,6 +349,7 @@
                 newMatchRequest: null,
                 settings: {
                     useTimer,
+                    useCalculation,
                     gameDurationMs: gameMins * 60 * 1000,
                     turnDurationMs: turnSecs * 1000
                 },
@@ -837,22 +845,30 @@
             
             if (move.cap) {
                 const victim = turnBoard[move.cap.r][move.cap.c];
-                const op = boardOps[tr][tc] || '+';
                 let rawPts = 0;
+                let logText = '';
                 const v1 = p.val;
                 const v2 = victim.val;
                 
-                if (op === '+') rawPts = v1 + v2;
-                else if (op === '-') rawPts = v1 - v2;
-                else if (op === '×') rawPts = v1 * v2;
-                else if (op === '÷') rawPts = v2 !== 0 ? v1 / v2 : v1;
+                if (gameState.settings && gameState.settings.useCalculation === false) {
+                    rawPts = p.dama ? 2 : 1;
+                    logText = `Capture = ${rawPts}`;
+                } else {
+                    const op = boardOps[tr][tc] || '+';
+                    if (op === '+') rawPts = v1 + v2;
+                    else if (op === '-') rawPts = v1 - v2;
+                    else if (op === '×') rawPts = v1 * v2;
+                    else if (op === '÷') rawPts = v2 !== 0 ? v1 / v2 : v1;
+                    
+                    if (p.dama) rawPts *= 2;
+                    
+                    const formattedPts = rawPts % 1 === 0 ? rawPts : rawPts.toFixed(2);
+                    const damaPrefix = p.dama ? '2 × ' : '';
+                    logText = `${damaPrefix}(${v1} ${op} ${v2}) = ${formattedPts}`;
+                }
                 
-                if (p.dama) rawPts *= 2;
                 tempScore += rawPts;
-                
-                const formattedPts = rawPts % 1 === 0 ? rawPts : rawPts.toFixed(2);
-                const damaPrefix = p.dama ? '2 × ' : '';
-                tempLogs.push(`${damaPrefix}(${v1} ${op} ${v2}) = ${formattedPts}`);
+                tempLogs.push(logText);
 
                 turnBoard[move.cap.r][move.cap.c] = null;
             }
